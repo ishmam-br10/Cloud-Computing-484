@@ -1,0 +1,93 @@
+sudo apt-get update
+sudo apt-get install curl gcc memcached rsync sqlite3 xfsprogs \
+                     git-core libffi-dev python3-setuptools \
+                     liberasurecode-dev libssl-dev python3-pip
+
+sudo apt-get install python3-coverage python3-dev python3-nose \
+                     python3-xattr python3-eventlet \
+                     python3-greenlet python3-pastedeploy \
+                     python3-netifaces python3-pip python3-dnspython \
+                     python3-mock
+
+
+cd /opt
+git clone https://github.com/openstack/python-swiftclient.git
+cd /opt/python-swiftclient;
+sudo pip3 install -r requirements.txt;
+python3 setup.py install;
+cd ..
+
+cd /opt
+git clone https://github.com/openstack/swift.git
+cd /opt/swift ;
+sudo pip3 install -r requirements.txt;
+sudo python3 setup.py install;
+cd ..
+
+
+mkdir -p /etc/swift
+
+cd /opt/swift/etc
+
+cp account-server.conf-sample /etc/swift/account-server.conf
+cp container-server.conf-sample /etc/swift/container-server.conf
+cp object-server.conf-sample /etc/swift/object-server.conf
+cp proxy-server.conf-sample /etc/swift/proxy-server.conf
+cp drive-audit.conf-sample /etc/swift/drive-audit.conf
+cp swift.conf-sample /etc/swift/swift.conf
+cp internal-client.conf-sample /etc/swift/internal-client.conf
+
+
+mkfs.xfs -f -L d1 /dev/vdb
+mkfs.xfs -f -L d2 /dev/vdc
+mkfs.xfs -f -L d3 /dev/vdd
+
+mkdir -p /srv/node/d1
+mkdir -p /srv/node/d2
+mkdir -p /srv/node/d3
+
+mount -t xfs -L d1 /srv/node/d1
+mount -t xfs -L d2 /srv/node/d2
+mount -t xfs -L d3 /srv/node/d3
+
+useradd swift
+chown -R swift:swift /srv/node
+
+cd /etc/swift
+swift-ring-builder account.builder create 3 3 1
+swift-ring-builder container.builder create 3 3 1
+swift-ring-builder object.builder create 3 3 1
+
+p=0
+for t in object container accout; do
+    for i in 1 2 3; do
+        swift-ring-builder $t.builder add z$i-127.0.0.1:620$p/d$i 100
+    done
+    let p++
+done
+
+swift-ring-builder account.builder add r1z1-127.0.0.1:6202/d1 100
+swift-ring-builder container.builder add r1z1-127.0.0.1:6201/d1 100
+swift-ring-builder object.builder add r1z1-127.0.0.1:6200/d1 100
+
+swift-ring-builder account.builder add r1z2-127.0.0.1:6202/d2 100
+swift-ring-builder container.builder add r1z2-127.0.0.1:6201/d2 100
+swift-ring-builder object.builder add r1z2-127.0.0.1:6200/d2 100
+
+swift-ring-builder account.builder add r1z3-127.0.0.1:6202/d3 100
+swift-ring-builder container.builder add r1z3-127.0.0.1:6201/d3 100
+swift-ring-builder object.builder add r1z3-127.0.0.1:6200/d3 100
+
+swift-ring-builder account.builder rebalance
+swift-ring-builder container.builder rebalance
+swift-ring-builder object.builder rebalance
+
+cd /etc/swift/proxy-server.conf
+allow_account_management = true
+account_autocreate = true
+
+echo local0.* /var/log/swift/all0.log > /etc/rsyslog.d/0-swift.conf
+mkdir /var/log/swift
+chown -R syslog.adm /var/log/swift
+chmod -R g+w /var/log/swift
+systemctl restart rsyslog
